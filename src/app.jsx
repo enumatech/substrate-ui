@@ -9,6 +9,7 @@ import {
 } from 'oo7-substrate';
 import Identicon from 'polkadot-identicon';
 import { AccountIdBond, SignerBond } from './AccountIdBond.jsx';
+import { NumberBond } from './NumberBond.jsx';
 import { BalanceBond } from './BalanceBond.jsx';
 import { InputBond } from './InputBond.jsx';
 import { TransactButton } from './TransactButton.jsx';
@@ -16,6 +17,7 @@ import { FileUploadBond } from './FileUploadBond.jsx';
 import { StakingStatusLabel } from './StakingStatusLabel';
 import { WalletList, SecretItem } from './WalletList';
 import { AddressBookList } from './AddressBookList';
+// import { TemplateModule } from './TemplateModule';
 import { TransformBondButton } from './TransformBondButton';
 import { Pretty } from './Pretty';
 
@@ -32,6 +34,11 @@ export class App extends ReactiveComponent {
 		window.system = system;
 		window.that = this;
 		window.metadata = metadata;
+		window.addCodecTransform('Intent', {_enum: ['BuyAll', 'SellAll']});
+		window.addCodecTransform('Lot', {amount: 'u128', asset: 'u32'});
+		// window.addCodecTransform('Approval', {approval_id: 'Hash', buy: 'Lot', sell: 'Lot', timestamp: 'u64'});
+		window.addCodecTransform('Approval', {approval_id: 'Hash', buy: 'Lot', sell: 'Lot', intent: 'Intent', owner: 'AccountId', timestamp: 'u64'});
+		window.addCodecTransform('TokenBalance', 'u128');
 	}
 
 	readyRender() {
@@ -48,6 +55,10 @@ export class App extends ReactiveComponent {
 			<PokeSegment />
 			<Divider hidden />
 			<TransactionsSegment />
+			<Divider hidden />
+			<Erc20ModuleSegment />
+			<Divider hidden />
+			<TemplateModuleSegment />
 		</div>);
 	}
 }
@@ -330,7 +341,7 @@ class PokeSegment extends React.Component {
 					}}
 				/>
 			</Segment>
-		}/>		
+		}/>
 	}
 }
 
@@ -356,6 +367,188 @@ class TransactionsSegment extends React.Component {
 					<InputBond bond={this.txhex}/>
 				</div>
 				<TransactButton tx={this.txhex.map(hexToBytes)} content="Publish" icon="sign in" />
+			</div>
+		</Segment>
+	}
+}
+
+function makeApproval(id, buy, sell, owner, intent) {
+	return {
+		approval_id: new Uint8Array([id,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,]),
+		buy,
+		sell,
+		intent: {option: intent},
+		owner,
+		timestamp: 0,
+		// instance_id: new Uint8Array(20),
+	}
+}
+
+class Erc20ModuleSegment extends React.Component {
+	constructor () {
+		super()
+		this.source = new Bond
+		this.totalSupply = new Bond
+		this.target = new Bond
+		this.amount = new Bond
+		this.allowance = new Bond
+	}
+
+	render () {
+		return <Segment style={{margin: '1em'}} padded>
+			<Header as='h2'>
+				<Icon name='certificate' />
+				<Header.Content>
+					ERC20
+					<Header.Subheader>ERC20 issuance/transfers/approvals</Header.Subheader>
+				</Header.Content>
+			</Header>
+			<div style={{ paddingBottom: '1em' }}>
+				<div style={{ fontSize: 'small' }}>from</div>
+				<SignerBond bond={this.source} />
+				<If condition={this.source.ready()} then={<span>
+					<Label>Balance
+						<Label.Detail>
+							<Pretty value={runtime.balances.balance(this.source)} />
+						</Label.Detail>
+					</Label>
+					<Label>Nonce
+						<Label.Detail>
+							<Pretty value={runtime.system.accountNonce(this.source)} />
+						</Label.Detail>
+					</Label>
+				</span>} />
+			</div>
+			<div style={{paddingBottom: '1em'}}>
+				<div style={{paddingBottom: '1em'}}>
+					<div style={{fontSize: 'small'}}>Issue tokens</div>
+					<NumberBond bond={this.totalSupply} placeholder='Supply e.g. 100000000' />
+					<TransactButton tx={{
+						sender: runtime.indices.tryIndex(this.source),
+						call: calls.erc20Multi.init(stringToBytes("blah"), stringToBytes("BLA"), this.totalSupply),
+					}} content="Issue" icon="sign in" />
+				</div>
+			</div>
+			<div style={{ paddingBottom: '1em' }}>
+				<div style={{ fontSize: 'small' }}>to</div>
+				<SignerBond bond={this.target} />
+				<If condition={this.target.ready()} then={<span>
+					<Label>Balance
+						<Label.Detail>
+							<Pretty value={runtime.balances.balance(this.target)} />
+						</Label.Detail>
+					</Label>
+					<Label>Nonce
+						<Label.Detail>
+							<Pretty value={runtime.system.accountNonce(this.target)} />
+						</Label.Detail>
+					</Label>
+				</span>} />
+			</div>
+			<div style={{paddingBottom: '1em'}}>
+				<div style={{paddingBottom: '1em'}}>
+					<div style={{fontSize: 'small'}}>Transfer tokens</div>
+					<NumberBond bond={this.amount} placeholder='Amount e.g. 123' />
+					<TransactButton tx={{
+						sender: runtime.indices.tryIndex(this.source),
+						call: calls.erc20Multi.transfer(0, this.target, this.amount),
+					}} content="Transfer" icon="sign in" />
+				</div>
+			</div>
+			<div style={{paddingBottom: '1em'}}>
+				<div style={{paddingBottom: '1em'}}>
+					<div style={{fontSize: 'small'}}>Approve</div>
+					<NumberBond bond={this.allowance} placeholder='Allowance e.g. 12' />
+					<TransactButton tx={{
+						sender: runtime.indices.tryIndex(this.source),
+						call: calls.erc20Multi.approve(0, this.target, this.allowance)
+					}} content="Fill" icon="sign in" />
+				</div>
+			</div>
+		</Segment>
+	}
+}
+
+class TemplateModuleSegment extends React.Component {
+	constructor () {
+		super()
+		this.alice = new Bond
+		this.bob = new Bond
+		this.dex = new Bond
+		// this.amountA = new Bond
+		// this.amountB = new Bond
+	}
+
+	render () {
+		return <Segment style={{margin: '1em'}} padded>
+			<Header as='h2'>
+				<Icon name='certificate' />
+				<Header.Content>
+					DEX
+					<Header.Subheader>Test fill</Header.Subheader>
+				</Header.Content>
+			</Header>
+			<div style={{ paddingBottom: '1em' }}>
+				<div style={{ fontSize: 'small' }}>from</div>
+				<SignerBond bond={this.alice} />
+				<If condition={this.alice.ready()} then={<span>
+					<Label>Balance
+						<Label.Detail>
+							<Pretty value={runtime.balances.balance(this.alice)} />
+						</Label.Detail>
+					</Label>
+					<Label>Nonce
+						<Label.Detail>
+							<Pretty value={runtime.system.accountNonce(this.alice)} />
+						</Label.Detail>
+					</Label>
+				</span>} />
+			</div>
+			<div style={{ paddingBottom: '1em' }}>
+				<div style={{ fontSize: 'small' }}>from</div>
+				<SignerBond bond={this.bob} />
+				<If condition={this.bob.ready()} then={<span>
+					<Label>Balance
+						<Label.Detail>
+							<Pretty value={runtime.balances.balance(this.bob)} />
+						</Label.Detail>
+					</Label>
+					<Label>Nonce
+						<Label.Detail>
+							<Pretty value={runtime.system.accountNonce(this.bob)} />
+						</Label.Detail>
+					</Label>
+				</span>} />
+			</div>
+			<div style={{ paddingBottom: '1em' }}>
+				<div style={{ fontSize: 'small' }}>from</div>
+				<SignerBond bond={this.dex} />
+				<If condition={this.dex.ready()} then={<span>
+					<Label>Balance
+						<Label.Detail>
+							<Pretty value={runtime.balances.balance(this.dex)} />
+						</Label.Detail>
+					</Label>
+					<Label>Nonce
+						<Label.Detail>
+							<Pretty value={runtime.system.accountNonce(this.dex)} />
+						</Label.Detail>
+					</Label>
+				</span>} />
+			</div>
+			<div style={{paddingBottom: '1em'}}>
+				<div style={{paddingBottom: '1em'}}>
+					<div style={{fontSize: 'small'}}>Fill</div>
+					{/* <NumberBond bond={this.somethingx} placeholder='Amount token A e.g. 12' />
+					<NumberBond bond={this.somethingy} placeholder='Amount token B e.g. 12' /> */}
+					<TransactButton tx={{
+						sender: runtime.indices.tryIndex(this.dex),
+						call: calls.template.fill(
+							makeApproval(0, {amount:1, asset: 1}, {amount:1, asset: 0}, 'BuyAll', this.alice),
+							makeApproval(1, {amount:1, asset: 0}, {amount:1, asset: 1}, 'BuyAll', this.bob)
+						),
+					}} content="Fill" icon="sign in" />
+				</div>
 			</div>
 		</Segment>
 	}
